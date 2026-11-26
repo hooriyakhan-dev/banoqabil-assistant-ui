@@ -1,4 +1,7 @@
+
 import { useEffect, useRef, useState } from "react";
+
+const API_URL = "https://banoqabil-assignment-02.vercel.app";
 
 const SUGGESTIONS = [
   { icon: "spark", title: "About the program", desc: "What Bano Qabil is and who runs it", q: "What is Bano Qabil?" },
@@ -31,7 +34,7 @@ const PATHS = {
 
 const Icon = ({ name, size = 18 }) => (
   <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-    <path d={PATHS[name]} />
+    <path d={PATHS[name] || PATHS.spark} />
   </svg>
 );
 
@@ -60,6 +63,7 @@ export default function App() {
 
   const patchLast = (fn) =>
     setMessages((prev) => {
+      if (!prev.length) return prev;
       const copy = [...prev];
       copy[copy.length - 1] = fn(copy[copy.length - 1]);
       return copy;
@@ -68,9 +72,11 @@ export default function App() {
   async function send(text) {
     const question = text.trim();
     if (!question || loading) return;
+
     setInput("");
     setSidebarOpen(false);
     setLoading(true);
+
     setMessages((prev) => [
       ...prev,
       { role: "user", content: question },
@@ -78,32 +84,86 @@ export default function App() {
     ]);
 
     try {
-      const res = await fetch("http://localhost:8000/api/chat", {
+      const res = await fetch(`${API_URL}/api/chat`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ question }),
       });
-      if (!res.ok || !res.body) throw new Error(`Server error ${res.status}`);
+
+      if (!res.ok || !res.body) {
+        throw new Error(`Server error ${res.status}`);
+      }
 
       const reader = res.body.getReader();
       const decoder = new TextDecoder();
       let buffer = "";
+
       while (true) {
         const { value, done } = await reader.read();
         if (done) break;
+
         buffer += decoder.decode(value, { stream: true });
         const lines = buffer.split("\n");
         buffer = lines.pop();
+
         for (const line of lines) {
           if (!line.trim()) continue;
+
           const msg = JSON.parse(line);
-          if (msg.token) patchLast((m) => ({ ...m, content: m.content + msg.token }));
-          if (msg.sources) patchLast((m) => ({ ...m, sources: msg.sources }));
-          if (msg.error) patchLast((m) => ({ ...m, content: `⚠️ ${msg.error}` }));
+
+          if (msg.token) {
+            patchLast((m) => ({
+              ...m,
+              content: m.content + msg.token,
+            }));
+          }
+
+          if (msg.sources) {
+            patchLast((m) => ({
+              ...m,
+              sources: msg.sources,
+            }));
+          }
+
+          if (msg.error) {
+            patchLast((m) => ({
+              ...m,
+              content: `⚠️ ${msg.error}`,
+            }));
+          }
+        }
+      }
+
+      const remaining = buffer.trim();
+      if (remaining) {
+        const msg = JSON.parse(remaining);
+
+        if (msg.token) {
+          patchLast((m) => ({
+            ...m,
+            content: m.content + msg.token,
+          }));
+        }
+
+        if (msg.sources) {
+          patchLast((m) => ({
+            ...m,
+            sources: msg.sources,
+          }));
+        }
+
+        if (msg.error) {
+          patchLast((m) => ({
+            ...m,
+            content: `⚠️ ${msg.error}`,
+          }));
         }
       }
     } catch (err) {
-      patchLast((m) => ({ ...m, content: `⚠️ ${err.message}. Is the backend running?` }));
+      patchLast((m) => ({
+        ...m,
+        content: `⚠️ ${err.message}. Please try again.`,
+      }));
     } finally {
       setLoading(false);
     }
@@ -111,14 +171,28 @@ export default function App() {
 
   async function markWrong(index) {
     const m = messages[index];
+
     try {
-     await fetch("http://localhost:8000/api/log", {
+      const res = await fetch(`${API_URL}/api/log`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ question: m.question, answer: m.content, sources: m.sources }),
+        body: JSON.stringify({
+          question: m.question,
+          answer: m.content,
+          sources: m.sources,
+        }),
       });
-      setMessages((prev) => prev.map((x, i) => (i === index ? { ...x, logged: true } : x)));
-    } catch {}
+
+      if (!res.ok) throw new Error("Could not submit feedback");
+
+      setMessages((prev) =>
+        prev.map((x, i) =>
+          i === index ? { ...x, logged: true } : x
+        )
+      );
+    } catch (err) {
+      console.error("Feedback error:", err);
+    }
   }
 
   async function copyAnswer(text, index) {
@@ -126,7 +200,9 @@ export default function App() {
       await navigator.clipboard.writeText(text);
       setCopied(index);
       setTimeout(() => setCopied(null), 1600);
-    } catch {}
+    } catch {
+      console.error("Copy failed");
+    }
   }
 
   const newChat = () => {
@@ -143,9 +219,12 @@ export default function App() {
       <div className="blob b1" />
       <div className="blob b2" />
       <div className="blob b3" />
-      <div className={`scrim ${sidebarOpen ? "show" : ""}`} onClick={() => setSidebarOpen(false)} />
 
-      {/* ---------------- SIDEBAR ---------------- */}
+      <div
+        className={`scrim ${sidebarOpen ? "show" : ""}`}
+        onClick={() => setSidebarOpen(false)}
+      />
+
       <aside className={`sidebar ${sidebarOpen ? "open" : ""}`}>
         <div className="brand">
           <div className="logo"><Bot size={24} /></div>
@@ -153,7 +232,11 @@ export default function App() {
             <h1>Bano Qabil</h1>
             <p>AI Assistant</p>
           </div>
-          <button className="icon-btn close-btn" onClick={() => setSidebarOpen(false)} aria-label="Close menu">
+          <button
+            className="icon-btn close-btn"
+            onClick={() => setSidebarOpen(false)}
+            aria-label="Close menu"
+          >
             <Icon name="close" />
           </button>
         </div>
@@ -195,11 +278,15 @@ export default function App() {
         </footer>
       </aside>
 
-      {/* ---------------- MAIN ---------------- */}
       <section className="main">
-        <button className="icon-btn menu-btn" onClick={() => setSidebarOpen(true)} aria-label="Open menu">
+        <button
+          className="icon-btn menu-btn"
+          onClick={() => setSidebarOpen(true)}
+          aria-label="Open menu"
+        >
           <Icon name="menu" />
         </button>
+
         <span className="status"><i /> Online</span>
 
         <div className="chat">
@@ -210,11 +297,20 @@ export default function App() {
                 <span className="ring r2" />
                 <div className="orb"><Bot size={36} /></div>
               </div>
+
               <h2>How can I <em>help</em> you today?</h2>
-              <p>Ask anything about the Bano Qabil program in English, Urdu or Roman Urdu.</p>
+              <p>
+                Ask anything about the Bano Qabil program in English, Urdu or Roman Urdu.
+              </p>
+
               <div className="cards">
                 {SUGGESTIONS.map((s, i) => (
-                  <button key={s.title} className="s-card" style={{ animationDelay: `${0.15 + i * 0.09}s` }} onClick={() => send(s.q)}>
+                  <button
+                    key={s.title}
+                    className="s-card"
+                    style={{ animationDelay: `${0.15 + i * 0.09}s` }}
+                    onClick={() => send(s.q)}
+                  >
                     <span className="s-icon"><Icon name={s.icon} /></span>
                     <span className="s-text">
                       <strong>{s.title}</strong>
@@ -230,23 +326,40 @@ export default function App() {
             const isLast = i === messages.length - 1;
             const streaming = loading && isLast;
             const typing = streaming && !m.content;
+
             return (
               <div key={i} className={`msg ${m.role}`}>
                 {m.role === "assistant" && (
-                  <div className={`avatar ${streaming ? "pulse" : ""}`}><Bot size={20} /></div>
+                  <div className={`avatar ${streaming ? "pulse" : ""}`}>
+                    <Bot size={20} />
+                  </div>
                 )}
+
                 <div className="msg-body">
-                  {m.role === "assistant" && <span className="who">Bano Qabil AI</span>}
+                  {m.role === "assistant" && (
+                    <span className="who">Bano Qabil AI</span>
+                  )}
+
                   <div className={`bubble ${streaming && m.content ? "streaming" : ""}`}>
-                    {typing ? <span className="typing"><i /><i /><i /></span> : m.content}
+                    {typing ? (
+                      <span className="typing"><i /><i /><i /></span>
+                    ) : (
+                      m.content
+                    )}
 
                     {m.role === "assistant" && m.sources?.length > 0 && (
                       <details className="sources">
                         <summary>Sources ({m.sources.length})</summary>
                         <ul>
-                          {m.sources.map((s) => (
-                            <li key={s.url}>
-                              <a href={s.url} target="_blank" rel="noreferrer">{s.title}</a>
+                          {m.sources.map((s, index) => (
+                            <li key={s.url || `${s.title}-${index}`}>
+                              {s.url ? (
+                                <a href={s.url} target="_blank" rel="noreferrer">
+                                  {s.title}
+                                </a>
+                              ) : (
+                                <span>{s.title}</span>
+                              )}
                             </li>
                           ))}
                         </ul>
@@ -260,7 +373,12 @@ export default function App() {
                         <Icon name={copied === i ? "check" : "copy"} size={14} />
                         {copied === i ? "Copied" : "Copy"}
                       </button>
-                      <button className={`flag ${m.logged ? "done" : ""}`} disabled={m.logged} onClick={() => markWrong(i)}>
+
+                      <button
+                        className={`flag ${m.logged ? "done" : ""}`}
+                        disabled={m.logged}
+                        onClick={() => markWrong(i)}
+                      >
                         <Icon name={m.logged ? "check" : "flag"} size={14} />
                         {m.logged ? "Flagged" : "Wrong answer"}
                       </button>
@@ -270,6 +388,7 @@ export default function App() {
               </div>
             );
           })}
+
           <div ref={bottomRef} />
         </div>
 
@@ -287,11 +406,20 @@ export default function App() {
               placeholder="Type your question..."
               disabled={loading}
             />
-            <button type="submit" className="send" disabled={loading || !input.trim()} aria-label="Send message">
+
+            <button
+              type="submit"
+              className="send"
+              disabled={loading || !input.trim()}
+              aria-label="Send message"
+            >
               <Icon name="send" />
             </button>
           </div>
-          <p className="hint">AI can make mistakes. Use “Wrong answer” to flag hallucinations for review.</p>
+
+          <p className="hint">
+            AI can make mistakes. Use “Wrong answer” to flag hallucinations for review.
+          </p>
         </form>
       </section>
     </div>
